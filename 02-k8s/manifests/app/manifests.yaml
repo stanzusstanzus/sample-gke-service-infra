@@ -1,0 +1,202 @@
+---
+#nginx configmap
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: nginx-conf
+data:
+  site.conf: |
+    server {
+        listen       80;
+        server_name  localhost;
+        root         /usr/share/nginx/html;
+
+        location / {
+            index    index.html index.htm;
+        }
+
+        location ~* \.(?:css|js)$ {
+          expires 1y;
+          add_header Cache-Control "public";
+        }
+
+        error_page   500 502 503 504  /50x.html;
+        location = /50x.html {
+            root   /usr/share/nginx/html;
+        }
+    }
+    server {
+        listen       81;
+        server_name  localhost;
+
+        location /metrics {
+            stub_status on;
+        }
+    }
+---
+#deployment for the static site
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: static-site-deployment
+  labels:
+    app: static-site
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: static-site
+  template:
+    metadata:
+      labels:
+        app: static-site
+      annotations:
+          prometheus.io/scrape: 'true'
+          prometheus.io/port:   '9113'
+    spec:
+      containers:
+      - name: nginx
+        image: gcr.io/${project_id}/app-images/sample-static-site:0.1.0
+        imagePullPolicy: Always
+        ports:
+        - containerPort: 80
+        volumeMounts:
+        - mountPath: /etc/nginx/conf.d/
+          readOnly: true
+          name: nginx-conf
+        readinessProbe:
+          httpGet:
+            path: /
+            port: 80
+          initialDelaySeconds: 15
+          periodSeconds: 5
+        resources:
+          limits:
+            cpu: 200m
+            memory: 200Mi
+          requests:
+            cpu: 100m
+            memory: 100Mi
+      - name: nginx-prom-exporter
+        image: mirror.gcr.io/nginx/nginx-prometheus-exporter:0.8.0
+        ports:
+        - containerPort: 9113
+        resources:
+          limits:
+            cpu: 200m
+            memory: 200Mi
+          requests:
+            cpu: 100m
+            memory: 100Mi
+        args: ["-nginx.scrape-uri", "http://localhost:81/metrics"]
+      volumes:
+      - name: nginx-conf
+        configMap:
+          name: nginx-conf
+          items:
+            - key: site.conf
+              path: site.conf
+---
+#service for the static site
+apiVersion: v1
+kind: Service
+metadata:
+  name: static-site-service
+  annotations:
+    cloud.google.com/backend-config: '{"ports": {"80":"static-site-backend-config"}}'
+spec:
+  type: NodePort
+  ports:
+  - port: 80
+    targetPort: 80
+  selector:
+    app: static-site
+---
+# deployment for the webapp
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: war-deployment
+  labels:
+    app: war
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: war
+  template:
+    metadata:
+      labels:
+        app: war
+    spec:
+      containers:
+      - name: tomcat
+        image: gcr.io/${project_id}/app-images/sample-war:0.1.0
+        ports:
+        - containerPort: 8080
+        readinessProbe:
+          httpGet:
+            path: /sample/
+            port: 8080
+          initialDelaySeconds: 15
+          periodSeconds: 5
+        volumeMounts:
+        - mountPath: /etc/prevayler
+          name: prevayler-storage
+        resources:
+          requests:
+            memory: "512Mi"
+            cpu: "200m"
+          limits:
+            memory: "768Mi"
+            cpu: "300m"
+      volumes:
+      - name: prevayler-storage
+        persistentVolumeClaim:
+          claimName: prevayler-storage
+---
+#Service for war
+apiVersion: v1
+kind: Service
+metadata:
+  name: war-service
+spec:
+  type: NodePort
+  ports:
+  - port: 8080
+    targetPort: 8080
+  selector:
+    app: war
+# Ingress for static site and war
+---
+apiVersion: networking.k8s.io/v1beta1
+kind: Ingress
+metadata:
+  name: static-site-ingress
+  annotations:
+    kubernetes.io/ingress.class: gce
+spec:
+  rules:
+  - http:
+      paths:
+      - path: /*
+        backend:
+          serviceName: static-site-service
+          servicePort: 80
+      - path: /sample/*
+        backend:
+          serviceName: war-service
+          servicePort: 8080
+# BackendConfig to enable CDN for static site
+---
+apiVersion: cloud.google.com/v1beta1
+kind: BackendConfig
+metadata:
+  name: static-site-backend-config
+spec:
+  cdn:
+    enabled: true
+    cachePolicy:
+      includeHost: true
+      includeProtocol: true
+      includeQueryString: false

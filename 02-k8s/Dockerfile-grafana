@@ -1,0 +1,6 @@
+FROM grafana/grafana:6.5.3
+#Dashboards are sourced from Grafana Dashboard marketplace
+USER root
+RUN mkdir -p /usr/local/share/dashboards && chown grafana:grafana /usr/local/share/dashboards
+COPY files/dashboards/* /usr/local/share/dashboards/
+USER grafana

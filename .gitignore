@@ -1,0 +1,6 @@
+*.plan
+.terraform
+.DS_Store
+*tfstate*
+**/planout
+**/.terraform.lock.hcl

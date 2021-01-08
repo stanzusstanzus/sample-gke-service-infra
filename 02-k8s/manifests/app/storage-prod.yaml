@@ -1,0 +1,29 @@
+---
+kind: StorageClass
+apiVersion: storage.k8s.io/v1
+metadata:
+  name: regional-ssd-pd
+provisioner: kubernetes.io/gce-pd
+parameters:
+  type: pd-ssd
+  replication-type: regional-pd
+volumeBindingMode: WaitForFirstConsumer
+allowedTopologies:
+- matchLabelExpressions:
+  - key: failure-domain.beta.kubernetes.io/zone
+    values:
+    - australia-southeast1-a
+    - australia-southeast1-b
+---
+#persistentVolumeClaim for the file data store
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: prevayler-storage
+spec:
+  accessModes:
+  - ReadWriteOnce
+  resources:
+    requests:
+      storage: 10Gi
+  storageClassName: regional-ssd-pd
